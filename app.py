@@ -222,7 +222,7 @@ ICONES_LUCIDE = {
     'menu_assinaturas': 'signature', 'menu_excluir': 'trash-2',
     'menu_gerou_aprovou': 'user-check',
     'menu_plantao': 'calendar-days', 'menu_ferias': 'palmtree', 'menu_atividades': 'list-checks', 'menu_time': 'users',
-    'menu_inicio': 'layout-grid',
+    'menu_consulta_srs': 'file-text', 'menu_inicio': 'layout-grid',
     'menu_sair': 'log-out', 'atualizar_fichas': 'refresh-cw',
     'atualizar_graficos': 'refresh-cw',
 }
@@ -9389,6 +9389,262 @@ def tela_time():
             aba_configurar_time(tabela)
 
 
+# 4b. CONSULTA DE SRs BOEING
+# A página Consulta_SRs.html é gerada pelo banco_srs.py no PC da Engenharia e tem dados
+# BOEING PROPRIETARY: ela fica só no banco (Supabase), nunca no repositório, que é público.
+# Os anexos (PDFs) continuam no SharePoint: a página usa links relativos à pasta onde foi
+# gerada, e aqui eles passam a apontar para o endereço dessa pasta no SharePoint.
+NIVEIS_CONSULTA_SRS = {1, 2, 3, 4, 5}
+LIMITE_HTML_SRS = 150 * 1024 * 1024
+
+
+def pode_atualizar_consulta_srs():
+    return nivel_atual() == NIVEL_ADMIN
+
+
+def criar_tabela_consulta_srs():
+    with conectar_banco() as conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS consulta_srs (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                html_gz BYTEA,
+                nome_arquivo TEXT,
+                tamanho BIGINT,
+                base_anexos TEXT,
+                atualizado_em TEXT,
+                atualizado_por TEXT
+            )
+        ''')
+
+
+@st.cache_resource
+def garantir_tabela_consulta_srs():
+    criar_tabela_consulta_srs()
+    return True
+
+
+def carregar_info_consulta_srs():
+    garantir_tabela_consulta_srs()
+    with conectar_banco() as conn:
+        registro = conn.execute(
+            '''SELECT nome_arquivo, tamanho, base_anexos, atualizado_em, atualizado_por,
+                      html_gz IS NOT NULL AS tem_html
+               FROM consulta_srs WHERE id = 1'''
+        ).fetchone()
+    return dict(registro) if registro else {}
+
+
+@st.cache_data(max_entries=1, show_spinner="Carregando a consulta de SRs...")
+def carregar_html_consulta_srs(versao):
+    """A versão (data da última atualização) entra só para trocar o cache quando muda."""
+    import gzip
+    with conectar_banco() as conn:
+        registro = conn.execute('SELECT html_gz FROM consulta_srs WHERE id = 1').fetchone()
+    if not registro or registro[0] is None:
+        return ""
+    return gzip.decompress(bytes(registro[0])).decode("utf-8")
+
+
+def salvar_html_consulta_srs(conteudo, nome_arquivo, usuario):
+    import gzip
+    agora = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    compactado = gzip.compress(conteudo, compresslevel=6)
+    garantir_tabela_consulta_srs()
+    with conectar_banco() as conn:
+        conn.execute(
+            '''INSERT INTO consulta_srs (id, html_gz, nome_arquivo, tamanho, atualizado_em, atualizado_por)
+               VALUES (1, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   html_gz = excluded.html_gz, nome_arquivo = excluded.nome_arquivo,
+                   tamanho = excluded.tamanho, atualizado_em = excluded.atualizado_em,
+                   atualizado_por = excluded.atualizado_por''',
+            (compactado, nome_arquivo, len(conteudo), agora, usuario),
+        )
+    carregar_html_consulta_srs.clear()
+
+
+def salvar_base_anexos_srs(base):
+    garantir_tabela_consulta_srs()
+    with conectar_banco() as conn:
+        conn.execute(
+            '''INSERT INTO consulta_srs (id, base_anexos) VALUES (1, ?)
+               ON CONFLICT(id) DO UPDATE SET base_anexos = excluded.base_anexos''',
+            (base or None,),
+        )
+
+
+def normalizar_endereco_sharepoint(endereco):
+    """Converte o endereço de uma pasta do SharePoint/OneDrive no endereço direto da pasta.
+
+    Aceita o endereço da barra do navegador (inclusive .../AllItems.aspx?id=/sites/...),
+    o link "Copiar link" do tipo /:f:/r/... e o endereço direto. Devolve (endereço, erro).
+    """
+    from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+    endereco = safe_str(endereco).strip().strip('"').strip("'")
+    if not endereco:
+        return "", None
+    partes = urlsplit(endereco)
+    if partes.scheme not in ("http", "https") or not partes.netloc:
+        return "", (
+            "Cole o endereço da pasta como ele aparece no navegador, começando com https://. "
+            "Caminhos do computador (C:\\..., OneDrive sincronizado) não abrem para outras pessoas."
+        )
+    caminho = unquote(partes.path)
+    consulta = parse_qs(partes.query)
+    if consulta.get("id"):
+        # Endereço da biblioteca no navegador: a pasta vem no parâmetro id.
+        caminho = unquote(consulta["id"][0])
+    elif re.match(r"^/:[a-z]:/r/", caminho):
+        caminho = re.sub(r"^/:[a-z]:/r", "", caminho)
+    elif re.match(r"^/:[a-z]:/[a-z]/", caminho):
+        return "", (
+            "Esse é um link de compartilhamento curto, que não mostra o caminho da pasta. "
+            "Abra a pasta no SharePoint pelo navegador e copie o endereço da barra de endereços."
+        )
+    caminho = caminho.rstrip("/")
+    return f"{partes.scheme}://{partes.netloc}{quote(caminho)}/", None
+
+
+def html_srs_com_anexos(conteudo, base_anexos):
+    """Faz os links relativos dos anexos apontarem para a pasta no SharePoint."""
+    if not base_anexos:
+        return conteudo
+    tag = f'<base href="{html.escape(base_anexos, quote=True)}" target="_blank">'
+    inicio = re.search(r"<head[^>]*>", conteudo[:5000], re.I)
+    if inicio:
+        return conteudo[:inicio.end()] + tag + conteudo[inicio.end():]
+    return tag + conteudo
+
+
+def exemplo_link_anexo_srs(conteudo, base_anexos):
+    """Primeiro anexo da página, já com o endereço do SharePoint, para conferir o link."""
+    from urllib.parse import urljoin
+    achado = re.search(r'const ANEX=\{"[^"]*":\s*\[\["((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)"', conteudo[:5_000_000])
+    if not achado or not base_anexos:
+        return None
+    try:
+        nome, relativo = json.loads(f'"{achado.group(1)}"'), json.loads(f'"{achado.group(2)}"')
+    except ValueError:
+        return None
+    return nome, urljoin(base_anexos, relativo)
+
+
+CSS_CONSULTA_SRS = """
+<style>
+.srs-topo { margin: -.6rem 0 .6rem; }
+.srs-topo .ativ-desc { margin-bottom: 0; }
+.st-key-consulta_srs_quadro iframe { border-radius: 12px; border: 1px solid #E3E6EB; background: #fff; }
+</style>
+"""
+
+
+def aba_atualizar_consulta_srs(info, conteudo):
+    st.markdown("##### 1. Página de consulta")
+    st.caption(
+        "Rode o Atualizar_banco.bat no seu PC e envie aqui a Consulta_SRs.html que ele gerou. "
+        "A página fica guardada no banco do site (não no GitHub) e só quem tem login vê."
+    )
+    with st.form("form_html_srs", clear_on_submit=True, border=False):
+        arquivo = st.file_uploader("Consulta_SRs.html", type=["html", "htm"], key="upload_html_srs")
+        enviar = st.form_submit_button("Enviar página", type="primary")
+    if enviar:
+        if arquivo is None:
+            st.warning("Escolha o arquivo Consulta_SRs.html antes de enviar.")
+        else:
+            dados = arquivo.getvalue()
+            if len(dados) > LIMITE_HTML_SRS:
+                st.error("O arquivo passa de 150 MB. Confira se é mesmo a Consulta_SRs.html.")
+            elif b"const DATA=" not in dados or b"const ANEX=" not in dados:
+                st.error(
+                    "Esse arquivo não parece ser a página gerada pelo banco_srs.py "
+                    "(Consulta_SRs.html). Nada foi alterado."
+                )
+            else:
+                with st.spinner("Guardando a página..."):
+                    salvar_html_consulta_srs(
+                        dados, arquivo.name, safe_str(st.session_state.get("nome_usuario"))
+                    )
+                st.toast("Consulta de SRs atualizada.", icon=":material/check_circle:")
+                st.rerun()
+
+    st.markdown("##### 2. Anexos (PDFs) no SharePoint")
+    st.caption(
+        "Os PDFs continuam no SharePoint da Engenharia, onde já estão. Abra no navegador a pasta "
+        "do SharePoint onde fica a Consulta_SRs.html (a mesma pasta em que você rodou o .bat, "
+        "ex.: General › BD › teste) e cole aqui o endereço da barra do navegador. "
+        "Quem clicar num anexo abre o PDF no SharePoint com o próprio login da GOL."
+    )
+    with st.form("form_base_srs", border=False):
+        endereco = st.text_input(
+            "Endereço da pasta no SharePoint",
+            value=info.get("base_anexos") or "",
+            placeholder="https://empresa.sharepoint.com/sites/.../Shared Documents/General/BD/teste",
+        )
+        salvar = st.form_submit_button("Salvar endereço")
+    if salvar:
+        base, erro = normalizar_endereco_sharepoint(endereco)
+        if erro:
+            st.error(erro)
+        else:
+            salvar_base_anexos_srs(base)
+            st.toast("Endereço dos anexos salvo.", icon=":material/check_circle:")
+            st.rerun()
+    if info.get("base_anexos"):
+        st.caption(f"Pasta usada para os anexos: `{info['base_anexos']}`")
+        exemplo = exemplo_link_anexo_srs(conteudo, info["base_anexos"]) if conteudo else None
+        if exemplo:
+            st.markdown(f"Teste um anexo: [{exemplo[0]}]({exemplo[1]})")
+
+
+@protegido
+def tela_consulta_srs():
+    if not exigir_nivel(*NIVEIS_CONSULTA_SRS):
+        return
+    st.markdown(CSS_ATIVIDADES + CSS_CONSULTA_SRS, unsafe_allow_html=True)
+    info = carregar_info_consulta_srs()
+    conteudo = carregar_html_consulta_srs(info.get("atualizado_em")) if info.get("tem_html") else ""
+    if conteudo:
+        quando = formatar_data_hora_brasilia(info.get("atualizado_em"))
+        por = safe_str(info.get("atualizado_por"))
+        resumo = f"Atualizada em <b>{quando}</b>" + (f" por {html.escape(por)}" if por else "")
+    else:
+        resumo = "A página de consulta ainda não foi enviada"
+    st.markdown(
+        '<div class="srs-topo"><div class="ativ-titulo">Consulta SR\'s</div>'
+        '<p class="ativ-desc">SRs enviados à Boeing: o que foi pedido, a resposta e os anexos.</p>'
+        f'<div class="ativ-resumo">{resumo}</div></div>',
+        unsafe_allow_html=True,
+    )
+    if pode_atualizar_consulta_srs():
+        aba_consulta, aba_atualizar = st.tabs(["Consulta", "Atualizar"])
+    else:
+        aba_consulta, aba_atualizar = st.container(), None
+    with aba_consulta:
+        if not conteudo:
+            st.markdown(
+                '<div class="ativ-vazio">A consulta de SRs ainda não foi carregada.'
+                + ('<br>Envie a Consulta_SRs.html na aba Atualizar.' if aba_atualizar else
+                   '<br>Peça a um administrador para enviar a página.')
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            if not info.get("base_anexos") and aba_atualizar:
+                st.info(
+                    "Os anexos (PDFs) só abrem depois que o endereço da pasta no SharePoint "
+                    "for salvo na aba Atualizar."
+                )
+            with st.container(key="consulta_srs_quadro"):
+                components.html(
+                    html_srs_com_anexos(conteudo, info.get("base_anexos")),
+                    height=1100, scrolling=True,
+                )
+    if aba_atualizar:
+        with aba_atualizar:
+            aba_atualizar_consulta_srs(info, conteudo)
+
+
 # 5. ROTEAMENTO E BARRA LATERAL
 def logo_html():
     for caminho in ("assets/logo_gol.svg", "assets/logo_gol.png"):
@@ -9426,6 +9682,7 @@ PAGINAS = {
     'gerou_aprovou': ("Gerou e aprovou", ":material/how_to_reg:", tela_gerou_aprovou, {1, 2, 3, 4, 5}),
     'atividades': ("Projetos e atividades", ":material/checklist:", tela_atividades, NIVEIS_ATIVIDADES),
     'time': ("Funções do time", ":material/groups:", tela_time, NIVEIS_TIME),
+    'consulta_srs': ("Consulta SR's", ":material/description:", tela_consulta_srs, NIVEIS_CONSULTA_SRS),
 }
 GRUPOS_MENU = {
     'ficha': [
@@ -9439,6 +9696,9 @@ GRUPOS_MENU = {
     # Atividades do time ficam dentro da área Time (antes era um cartão separado).
     'time': [
         ("Time", ['time', 'atividades']),
+    ],
+    'srs': [
+        ("SRs Boeing", ['consulta_srs']),
     ],
 }
 # Partes do site oferecidas na tela de escolha depois do login.
@@ -9460,6 +9720,12 @@ AREAS = {
         'descricao': "Quem é focal e backup de cada frente, projetos, atividades e prazos do time.",
         'icone': 'users',
         'menu': "Time",
+    },
+    'srs': {
+        'titulo': "Consulta SR's",
+        'descricao': "SRs enviados à Boeing: busca por dano e região, resposta da Boeing e anexos.",
+        'icone': 'file-text',
+        'menu': "Consulta SR's",
     },
 }
 
@@ -9513,6 +9779,10 @@ ICONES_AREA = {
     'users': (
         '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
         '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+    ),
+    'file-text': (
+        '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>'
+        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'
     ),
 }
 
