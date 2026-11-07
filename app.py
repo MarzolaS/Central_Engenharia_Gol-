@@ -9399,7 +9399,9 @@ LIMITE_HTML_SRS = 150 * 1024 * 1024
 
 
 def pode_atualizar_consulta_srs():
-    return nivel_atual() == NIVEL_ADMIN
+    # Só o usuário engenharia envia a página e muda o endereço dos anexos.
+    return safe_str(st.session_state.get('usuario_id')).casefold() == 'engenharia'
+
 
 
 def criar_tabela_consulta_srs():
@@ -9507,14 +9509,23 @@ def normalizar_endereco_sharepoint(endereco):
 
 
 def html_srs_com_anexos(conteudo, base_anexos):
-    """Faz os links relativos dos anexos apontarem para a pasta no SharePoint."""
-    if not base_anexos:
-        return conteudo
-    tag = f'<base href="{html.escape(base_anexos, quote=True)}" target="_blank">'
-    inicio = re.search(r"<head[^>]*>", conteudo[:5000], re.I)
-    if inicio:
-        return conteudo[:inicio.end()] + tag + conteudo[inicio.end():]
-    return tag + conteudo
+    """Prepara a página para dentro do site: links dos anexos no SharePoint, visual do site
+    e aviso ao site quando a página termina de carregar (tira a tela de carregamento)."""
+    if base_anexos:
+        tag = f'<base href="{html.escape(base_anexos, quote=True)}" target="_blank">'
+        inicio = re.search(r"<head[^>]*>", conteudo[:5000], re.I)
+        if inicio:
+            conteudo = conteudo[:inicio.end()] + tag + conteudo[inicio.end():]
+        else:
+            conteudo = tag + conteudo
+    fim_head = conteudo.find("</head>")
+    if fim_head >= 0:
+        conteudo = conteudo[:fim_head] + CSS_PAGINA_SRS + conteudo[fim_head:]
+    conteudo = conteudo.replace("Comece pelos filtros verdes lá em cima.", "Comece pelos filtros lá em cima.", 1)
+    fim_body = conteudo.rfind("</body>")
+    if fim_body < 0:
+        fim_body = len(conteudo)
+    return conteudo[:fim_body] + SCRIPT_FIM_CARREGAMENTO_SRS + conteudo[fim_body:]
 
 
 def exemplo_link_anexo_srs(conteudo, base_anexos):
@@ -9530,13 +9541,122 @@ def exemplo_link_anexo_srs(conteudo, base_anexos):
     return nome, urljoin(base_anexos, relativo)
 
 
-CSS_CONSULTA_SRS = """
+# Visual do site aplicado por cima do estilo da página gerada pelo banco_srs.py
+# (sempre claro, laranja GOL, cartões brancos com borda suave, sem o cabeçalho azul).
+CSS_PAGINA_SRS = """
 <style>
-.srs-topo { margin: -.6rem 0 .6rem; }
-.srs-topo .ativ-desc { margin-bottom: 0; }
-.st-key-consulta_srs_quadro iframe { border-radius: 12px; border: 1px solid #E3E6EB; background: #fff; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;600&family=Source+Sans+3:wght@400;600;700&display=swap');
+:root{--bg:#F6F7F9;--card:#FFFFFF;--ink:#1D2433;--muted:#6B7280;--line:#E3E6EB;--accent:#E85A05;
+--ok:#1E7B45;--okbg:#E7F5EC;--no:#B3261E;--nobg:#FCEBE9;--mid:#8A5A00;--midbg:#FFF4DB;--info:#3B4352;--infobg:#EEF0F3;
+color-scheme:light}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 'Source Sans 3','Source Sans Pro',system-ui,-apple-system,'Segoe UI',sans-serif}
+header{display:none}
+.topbar{margin:0;padding:14px 18px;gap:10px 12px;border:1px solid var(--line);border-radius:16px;background:#fff;
+  box-shadow:0 10px 30px -22px rgba(30,36,48,.35);top:0}
+.topbar label{color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.08em}
+select,input{border:1px solid var(--line);border-radius:10px;background:#fff;padding:8px 10px;font-size:14px}
+.topbar select{border-color:var(--line)}
+/* Linha 1: busca grande + Limpar. Linha 2: filtros. */
+.topbar .f.q{flex:1 1 calc(100% - 120px);order:0}
+#clear{order:1;align-self:flex-end;height:41px}
+.topbar>.tops>*,.topbar .f.n{order:2}
+.topbar .tops{display:contents}
+#q{font-size:16px;padding:10px 14px;background:#FAFAFB}
+.topbar .f.q label{font-size:12px;color:#E85A05}
+select:focus,input:focus{outline:none;border-color:#FF6A13;box-shadow:0 0 0 3px rgba(255,106,19,.15)}
+select.on{border-color:#FF6A13;box-shadow:0 0 0 1px #FF6A13;background:#FFF7F1}
+button{border-radius:10px;border-color:var(--line);background:#fff;font-weight:500;padding:7px 14px}
+button:hover{border-color:#FF6A13;color:#E85A05}
+.wrap{max-width:none;padding:14px 0 24px;gap:14px}
+aside,.bar,.card{border-color:var(--line);border-radius:16px;box-shadow:0 10px 30px -24px rgba(30,36,48,.35)}
+aside{top:170px;padding:14px 16px;max-height:calc(100vh - 185px)}.bar{padding:14px 16px}.card{padding:14px 18px;margin-bottom:12px}
+.bar b{font-family:Inter,sans-serif;font-weight:600;font-size:20px}
+.top .sr{font-family:Inter,sans-serif;font-weight:600}
+summary,a.sim,.crumbs a{color:var(--accent)}
+.chip{border-radius:999px}
+.result{border-radius:10px}
+a.pdf{border-radius:8px;background:#fff;color:var(--ink)}a.pdf:hover{border-color:#FF6A13;color:#E85A05}
+.txt{background:#F6F7F9}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}.wrap>*{min-width:0}aside{position:static;max-height:none}
+.topbar{position:static}.topbar .f.q{flex-basis:calc(100% - 100px)}}
 </style>
 """
+
+# Avisa o site que a página terminou de desenhar: some a tela de carregamento.
+SCRIPT_FIM_CARREGAMENTO_SRS = """
+<script>
+(function(){function pronto(){try{window.parent.document.querySelectorAll('.srs-carregando')
+.forEach(function(e){e.classList.add('srs-pronto');setTimeout(function(){e.remove()},350)})}catch(e){}}
+if(document.readyState==='complete'){setTimeout(pronto,50)}else{window.addEventListener('load',function(){setTimeout(pronto,50)})}})();
+</script>
+"""
+
+CSS_CONSULTA_SRS = """
+<style>
+/* Tela inteira para a consulta: sem barra lateral e com pouca margem. */
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapseButton"] { display: none !important; }
+[data-testid="stMainBlockContainer"], .block-container {
+  max-width: 100% !important; padding: 1rem 1.6rem 0 !important; }
+[data-testid="stHeader"] { height: 0 !important; min-height: 0 !important; }
+/* Blocos que só carregam estilo não ocupam espaço (senão sobra um vão no topo). */
+[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"] > style:only-child),
+[data-testid="stElementContainer"]:has(> iframe[height="0"]) { display: none !important; }
+.st-key-srs_barra { align-items: center; gap: .6rem; margin-bottom: .1rem; }
+.st-key-srs_barra [data-testid="stColumn"] { align-self: center; }
+.srs-marca { display: flex; align-items: center; gap: .8rem; min-width: 0; }
+.srs-marca img { height: 22px !important; width: auto; }
+.srs-marca-sep { width: 1px; height: 26px; background: #D9DDE3; flex-shrink: 0; }
+.srs-marca-titulo { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 1.2rem;
+  letter-spacing: -.01em; color: #1F2430; white-space: nowrap; }
+.srs-marca-info { color: #6B7280; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srs-marca-info b { color: #1F2430; font-weight: 600; }
+.st-key-srs_inicio button, .st-key-srs_sair button, .st-key-srs_config button, .st-key-srs_voltar button {
+  min-height: 2.2rem; white-space: nowrap; }
+.st-key-srs_sair button { color: #6B7280; }
+.st-key-consulta_srs_quadro iframe { height: calc(100vh - 4.6rem) !important; border: 0; display: block; }
+.st-key-srs_config_area { max-width: 56rem; }
+/* Tela de carregamento por cima da página até a consulta terminar de desenhar. */
+@keyframes gol-girar { to { transform: rotate(360deg); } }
+@keyframes srs-desistir { to { opacity: 0; visibility: hidden; } }
+.srs-carregando { position: fixed; inset: 0; z-index: 999990; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; text-align: center;
+  background: linear-gradient(160deg, #FAFAFB 0%, #EEF0F3 100%); transition: opacity .3s ease;
+  animation: srs-desistir .3s ease 40s forwards; }
+.srs-carregando.srs-pronto { opacity: 0; pointer-events: none; }
+.srs-carregando img { height: 40px !important; }
+.srs-carregando-marca { font-family: 'Inter', sans-serif; font-weight: 600; font-size: .8rem;
+  letter-spacing: .14em; text-transform: uppercase; color: #FF6A13; margin-top: .4rem; }
+.srs-carregando-titulo { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 1.6rem;
+  letter-spacing: -.02em; color: #1F2430; }
+.srs-carregando p { margin: .2rem 0 0; color: #6B7280; font-size: .95rem; }
+.srs-carregando .gol-loader { width: 28px; height: 28px; border-radius: 50%; border: 3px solid #FFE1CC;
+  border-top-color: #FF6A13; animation: gol-girar .8s linear infinite; }
+</style>
+"""
+
+
+def tela_carregando_srs():
+    st.markdown(
+        f'<div class="srs-carregando">{logo_html()}'
+        '<div class="srs-carregando-marca">Central de Engenharia</div>'
+        '<div class="srs-carregando-titulo">Consulta SR\'s</div>'
+        '<div class="gol-loader"></div><p>Carregando os SRs…</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def preparar_consulta_srs():
+    """Deixa a página de SRs pronta no cache (chamado na tela de boas-vindas)."""
+    info = carregar_info_consulta_srs()
+    if info.get("tem_html"):
+        carregar_html_consulta_srs(info.get("atualizado_em"))
+
+
+def alternar_config_srs(mostrar):
+    st.session_state["srs_configurando"] = mostrar
+    if not mostrar:
+        st.session_state["srs_carregando"] = True
 
 
 def aba_atualizar_consulta_srs(info, conteudo):
@@ -9601,48 +9721,71 @@ def aba_atualizar_consulta_srs(info, conteudo):
 def tela_consulta_srs():
     if not exigir_nivel(*NIVEIS_CONSULTA_SRS):
         return
-    st.markdown(CSS_ATIVIDADES + CSS_CONSULTA_SRS, unsafe_allow_html=True)
+    try:
+        desenhar_consulta_srs()
+    except Exception:
+        # Se algo falhar, a tela de carregamento não pode ficar cobrindo a mensagem de erro.
+        st.markdown('<style>.srs-carregando{display:none !important}</style>', unsafe_allow_html=True)
+        raise
+
+
+def desenhar_consulta_srs():
+    st.markdown(CSS_CONSULTA_SRS, unsafe_allow_html=True)
+    pode_configurar = pode_atualizar_consulta_srs()
+    configurando = pode_configurar and st.session_state.get("srs_configurando", False)
+    # Ao entrar, a tela de carregamento cobre tudo até a consulta terminar de desenhar.
+    carregando = st.session_state.pop("srs_carregando", False) and not configurando
+    if carregando:
+        tela_carregando_srs()
     info = carregar_info_consulta_srs()
     conteudo = carregar_html_consulta_srs(info.get("atualizado_em")) if info.get("tem_html") else ""
     if conteudo:
         quando = formatar_data_hora_brasilia(info.get("atualizado_em"))
-        por = safe_str(info.get("atualizado_por"))
-        resumo = f"Atualizada em <b>{quando}</b>" + (f" por {html.escape(por)}" if por else "")
+        resumo = f"Atualizada em <b>{quando}</b>"
     else:
-        resumo = "A página de consulta ainda não foi enviada"
-    st.markdown(
-        '<div class="srs-topo"><div class="ativ-titulo">Consulta SR\'s</div>'
-        '<p class="ativ-desc">SRs enviados à Boeing: o que foi pedido, a resposta e os anexos.</p>'
-        f'<div class="ativ-resumo">{resumo}</div></div>',
-        unsafe_allow_html=True,
-    )
-    if pode_atualizar_consulta_srs():
-        aba_consulta, aba_atualizar = st.tabs(["Consulta", "Atualizar"])
-    else:
-        aba_consulta, aba_atualizar = st.container(), None
-    with aba_consulta:
-        if not conteudo:
-            st.markdown(
-                '<div class="ativ-vazio">A consulta de SRs ainda não foi carregada.'
-                + ('<br>Envie a Consulta_SRs.html na aba Atualizar.' if aba_atualizar else
-                   '<br>Peça a um administrador para enviar a página.')
-                + '</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            if not info.get("base_anexos") and aba_atualizar:
-                st.info(
-                    "Os anexos (PDFs) só abrem depois que o endereço da pasta no SharePoint "
-                    "for salvo na aba Atualizar."
-                )
-            with st.container(key="consulta_srs_quadro"):
-                components.html(
-                    html_srs_com_anexos(conteudo, info.get("base_anexos")),
-                    height=1100, scrolling=True,
-                )
-    if aba_atualizar:
-        with aba_atualizar:
+        resumo = "Página ainda não enviada"
+
+    outras_areas = [a for a in AREAS if a != 'srs' and paginas_da_area(a, nivel_atual())]
+    with st.container(key="srs_barra", horizontal=True):
+        st.markdown(
+            f'<div class="srs-marca">{logo_html()}<div class="srs-marca-sep"></div>'
+            '<div class="srs-marca-titulo">Consulta SR\'s</div>'
+            f'<div class="srs-marca-info">{resumo}</div></div>',
+            unsafe_allow_html=True, width="stretch",
+        )
+        if pode_configurar:
+            if configurando:
+                st.button("Voltar à consulta", key="srs_voltar", icon=":material/arrow_back:",
+                          on_click=alternar_config_srs, args=(False,), width="content")
+            else:
+                st.button("Atualizar", key="srs_config", icon=":material/settings:",
+                          on_click=alternar_config_srs, args=(True,), width="content",
+                          help="Enviar uma nova Consulta_SRs.html e o endereço dos anexos")
+        if outras_areas:
+            st.button("Início", key="srs_inicio", icon=":material/apps:", on_click=voltar_para_escolha,
+                      width="content", help="Voltar para a tela inicial, com as outras partes do site")
+        if st.button("Sair", key="srs_sair", icon=":material/logout:", width="content"):
+            sair()
+
+    if configurando:
+        with st.container(key="srs_config_area"):
+            st.markdown('<div style="height:.6rem"></div>', unsafe_allow_html=True)
             aba_atualizar_consulta_srs(info, conteudo)
+        return
+    if not conteudo:
+        st.markdown(
+            '<div class="ativ-vazio">A consulta de SRs ainda não foi carregada.'
+            + ('<br>Envie a Consulta_SRs.html em Atualizar.' if pode_configurar else
+               '<br>Peça ao usuário engenharia para enviar a página.')
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<style>.srs-carregando{display:none}</style>', unsafe_allow_html=True)
+        return
+    if not info.get("base_anexos") and pode_configurar:
+        st.info("Os anexos (PDFs) só abrem depois que o endereço da pasta no SharePoint for salvo em Atualizar.")
+    with st.container(key="consulta_srs_quadro"):
+        components.html(html_srs_com_anexos(conteudo, info.get("base_anexos")), height=900, scrolling=True)
 
 
 # 5. ROTEAMENTO E BARRA LATERAL
@@ -9751,6 +9894,9 @@ def paginas_da_area(area, nivel):
 
 def entrar_na_area(area):
     st.session_state['area'] = area
+    if area == 'srs':
+        st.session_state['srs_carregando'] = True
+        st.session_state['srs_configurando'] = False
     paginas = paginas_da_area(area, st.session_state['nivel_acesso'])
     if st.session_state['pagina_atual'] not in paginas and paginas:
         st.session_state['pagina_atual'] = paginas[0]
@@ -9941,6 +10087,7 @@ if st.session_state['usuario_logado'] and st.session_state.get('boas_vindas'):
         carregar_escala_plantao, carregar_colaboradores_plantao,
         carregar_ferias_plantao, carregar_crachas_plantao,
         carregar_projetos_atividades, carregar_tarefas_atividades,
+        preparar_consulta_srs,
     ):
         try:
             carregar()
@@ -10014,43 +10161,45 @@ else:
     if st.session_state['pagina_atual'] not in paginas_area:
         st.session_state['pagina_atual'] = paginas_area[0] if paginas_area else 'consulta'
 
-    with st.sidebar:
-        st.markdown(
-            f'<div class="menu-marca">{logo_html()}<div class="menu-marca-sep"></div>'
-            f'<div class="menu-marca-nome">{AREAS[area]["menu"]}</div></div>',
-            unsafe_allow_html=True,
-        )
-        outras = [a for a in AREAS if a != area and paginas_da_area(a, nivel)]
-        if outras:
-            st.button(
-                "Início", key="menu_inicio", use_container_width=True,
-                on_click=voltar_para_escolha,
-                help="Voltar para a tela inicial, com as outras partes do site",
-            )
-        for grupo, paginas in GRUPOS_MENU[area]:
-            visiveis = [p for p in paginas if pagina_permitida(p, nivel)]
-            if not visiveis:
-                continue
-            st.markdown(f'<div class="grupo-menu">{grupo}</div>', unsafe_allow_html=True)
-            for pagina in visiveis:
-                rotulo, icone, _, _ = PAGINAS[pagina]
-                st.button(
-                    rotulo,
-                    key=f"menu_{pagina}",
-                    use_container_width=True,
-                    type="primary" if st.session_state['pagina_atual'] == pagina else "secondary",
-                    on_click=ir_para,
-                    args=(pagina,),
-                )
-        with st.container(key="menu_rodape"):
-            nome = safe_str(st.session_state["nome_usuario"])
-            iniciais = "".join(parte[0] for parte in nome.split()[:2]).upper() or "?"
+    # A Consulta SR's usa a tela inteira, com a própria barra no topo.
+    if area != 'srs':
+        with st.sidebar:
             st.markdown(
-                f'<div class="usuario"><div class="usuario-avatar">{iniciais}</div>'
-                f'<div><b>{nome}</b><br><span>{PERFIS.get(nivel, "—")}</span></div></div>',
+                f'<div class="menu-marca">{logo_html()}<div class="menu-marca-sep"></div>'
+                f'<div class="menu-marca-nome">{AREAS[area]["menu"]}</div></div>',
                 unsafe_allow_html=True,
             )
-            if st.button("Sair", key="menu_sair", use_container_width=True):
-                sair()
+            outras = [a for a in AREAS if a != area and paginas_da_area(a, nivel)]
+            if outras:
+                st.button(
+                    "Início", key="menu_inicio", use_container_width=True,
+                    on_click=voltar_para_escolha,
+                    help="Voltar para a tela inicial, com as outras partes do site",
+                )
+            for grupo, paginas in GRUPOS_MENU[area]:
+                visiveis = [p for p in paginas if pagina_permitida(p, nivel)]
+                if not visiveis:
+                    continue
+                st.markdown(f'<div class="grupo-menu">{grupo}</div>', unsafe_allow_html=True)
+                for pagina in visiveis:
+                    rotulo, icone, _, _ = PAGINAS[pagina]
+                    st.button(
+                        rotulo,
+                        key=f"menu_{pagina}",
+                        use_container_width=True,
+                        type="primary" if st.session_state['pagina_atual'] == pagina else "secondary",
+                        on_click=ir_para,
+                        args=(pagina,),
+                    )
+            with st.container(key="menu_rodape"):
+                nome = safe_str(st.session_state["nome_usuario"])
+                iniciais = "".join(parte[0] for parte in nome.split()[:2]).upper() or "?"
+                st.markdown(
+                    f'<div class="usuario"><div class="usuario-avatar">{iniciais}</div>'
+                    f'<div><b>{nome}</b><br><span>{PERFIS.get(nivel, "—")}</span></div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Sair", key="menu_sair", use_container_width=True):
+                    sair()
 
     PAGINAS[st.session_state['pagina_atual']][2]()
