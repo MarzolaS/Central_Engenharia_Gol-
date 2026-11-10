@@ -297,3 +297,24 @@
   padding: 1rem 1.2rem 1.1rem; box-shadow: 0 10px 28px -22px rgba(30, 36, 48, .3); margin-bottom: 1rem; }
 .plan-caixa iframe { display: block; width: 100%; border: none; }
 .pint-desenho { width: 100%; border: none; display: block; }
+
+/* Consulta SR's (CSS_CONSULTA_SRS do app.py, adaptado) */
+.srs-tela { padding: 1rem 1.6rem 0; }
+.srs-barra { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
+.srs-barra .botao { min-height: 2.2rem; white-space: nowrap; }
+.srs-marca { display: flex; align-items: center; gap: .8rem; min-width: 0; flex: 1; }
+.srs-marca img { height: 22px; width: auto; }
+.srs-marca-sep { width: 1px; height: 26px; background: #D9DDE3; flex-shrink: 0; }
+.srs-marca-titulo { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 1.2rem; letter-spacing: -.01em; color: #1F2430; white-space: nowrap; }
+.srs-marca-info { color: #6B7280; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srs-marca-info b { color: #1F2430; font-weight: 600; }
+.srs-quadro { width: 100%; height: calc(100vh - 4.6rem); border: 0; display: block; }
+@keyframes gol-girar { to { transform: rotate(360deg); } }
+.srs-carregando { position: fixed; inset: 0; z-index: 999990; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; text-align: center; background: linear-gradient(160deg, #FAFAFB 0%, #EEF0F3 100%); }
+.srs-carregando img { height: 40px; }
+.srs-carregando-marca { font-family: 'Inter', sans-serif; font-weight: 600; font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; color: #FF6A13; margin-top: .4rem; }
+.srs-carregando-titulo { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 1.6rem; letter-spacing: -.02em; color: #1F2430; }
+.srs-carregando p { margin: .2rem 0 0; color: #6B7280; font-size: .95rem; }
+.srs-carregando .gol-loader { width: 28px; height: 28px; border-radius: 50%; border: 3px solid #FFE1CC; border-top-color: #FF6A13; animation: gol-girar .8s linear infinite; }
+@media (max-width: 700px) { .srs-barra { flex-wrap: wrap; } .srs-marca-info { display: none; } .srs-tela { padding: .6rem .6rem 0; } }
