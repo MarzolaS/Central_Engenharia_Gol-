@@ -115,6 +115,9 @@ def mensagens_da_requisicao():
 
 def _guardar_mensagem(tipo):
     def registrar(corpo=None, *args, **kwargs):
+        if _tela.get() is not None and corpo is not None and tipo != "toast":
+            _bloco("aviso", nivel=tipo, conteudo=str(corpo))
+            return _Nada()
         lista = _mensagens.get()
         if lista is not None and corpo is not None:
             lista.append({"tipo": tipo, "texto": str(corpo)})
@@ -126,7 +129,7 @@ error = _guardar_mensagem("error")
 warning = _guardar_mensagem("warning")
 success = _guardar_mensagem("success")
 info = _guardar_mensagem("info")
-toast = _guardar_mensagem("info")
+toast = _guardar_mensagem("toast")
 
 
 # Gravação de telas só de leitura (ex.: curva S da pintura): o que a função do
@@ -146,6 +149,10 @@ class gravar:
 
 
 def _bloco(tipo, **dados):
+    tela = _tela.get()
+    if tela is not None:
+        tela.atual().append({"tipo": tipo, **dados})
+        return _Nada()
     lista = _blocos.get()
     if lista is not None:
         lista.append({"tipo": tipo, **dados})
@@ -363,11 +370,220 @@ class _Nada:
 
 def columns(spec, *args, **kwargs):
     quantidade = spec if isinstance(spec, int) else len(spec)
+    if _tela.get() is not None:
+        pesos = [1] * spec if isinstance(spec, int) else [float(x) for x in spec]
+        grupo = _Caixa("colunas", pesos=pesos)
+        _tela.get().atual().append(grupo.bloco)
+        filhos = [_Caixa("coluna") for _ in range(quantidade)]
+        grupo.bloco["filhos"] = [f.bloco for f in filhos]
+        return filhos
     return [_Nada() for _ in range(quantidade)]
 
 
 def tabs(rotulos, *args, **kwargs):
+    if _tela.get() is not None:
+        grupo = _Caixa("abas", rotulos=[str(r) for r in rotulos])
+        _tela.get().atual().append(grupo.bloco)
+        filhos = [_Caixa("aba", rotulo=str(r)) for r in rotulos]
+        grupo.bloco["filhos"] = [f.bloco for f in filhos]
+        return filhos
     return [_Nada() for _ in rotulos]
+
+
+# --------------------------------------------------------------------------- #
+# Gravação de telas inteiras (ex.: Gráficos da frota): o que a tela do app.py
+# desenha vira uma árvore de blocos (colunas, abas, quadros, gráficos, tabelas,
+# campos). Os campos devolvem o valor que o site mandou em `valores`.
+_tela = contextvars.ContextVar("tela_gravada", default=None)
+
+
+class _Caixa:
+    def __init__(self, tipo, **dados):
+        self.bloco = {"tipo": tipo, **dados, "filhos": []}
+
+    def __enter__(self):
+        _tela.get().pilha.append(self.bloco["filhos"])
+        return self
+
+    def __exit__(self, *_):
+        _tela.get().pilha.pop()
+        return False
+
+    def __getattr__(self, nome):
+        funcao = globals().get(nome)
+        if not callable(funcao):
+            return _Nada()
+
+        def chamar(*args, **kwargs):
+            with self:
+                return funcao(*args, **kwargs)
+        return chamar
+
+
+class gravar_tela:
+    def __init__(self, valores=None):
+        self.valores = dict(valores or {})
+        self.arvore = []
+        self.pilha = [self.arvore]
+
+    def atual(self):
+        return self.pilha[-1]
+
+    def __enter__(self):
+        self._token = _tela.set(self)
+        return self
+
+    def __exit__(self, *_):
+        _tela.reset(self._token)
+        return False
+
+
+def container(*args, border=None, key=None, **kwargs):
+    if _tela.get() is None:
+        return _Nada()
+    caixa = _Caixa("container", borda=bool(border))
+    _tela.get().atual().append(caixa.bloco)
+    return caixa
+
+
+def expander(titulo="", expanded=False, **kwargs):
+    if _tela.get() is None:
+        return _Nada()
+    caixa = _Caixa("expander", titulo=str(titulo), aberto=bool(expanded))
+    _tela.get().atual().append(caixa.bloco)
+    return caixa
+
+
+class column_config:
+    @staticmethod
+    def _coluna(tipo, label=None, format=None, **kwargs):
+        return {"tipo": tipo, "rotulo": label, "formato": format}
+
+    NumberColumn = staticmethod(lambda label=None, **k: column_config._coluna("numero", label, **k))
+    DateColumn = staticmethod(lambda label=None, **k: column_config._coluna("data", label, **k))
+    TextColumn = staticmethod(lambda label=None, **k: column_config._coluna("texto", label, **k))
+    SelectboxColumn = staticmethod(lambda label=None, **k: column_config._coluna("texto", label, **k))
+    CheckboxColumn = staticmethod(lambda label=None, **k: column_config._coluna("marcar", label, **k))
+
+
+def _json_simples(valor):
+    import datetime as _dt
+    import math as _math
+    try:
+        import numpy as _np
+        import pandas as _pd
+    except ImportError:  # pragma: no cover
+        _np = _pd = None
+    if _pd is not None and isinstance(valor, (_pd.Timestamp, _dt.datetime, _dt.date)):
+        return None if _pd.isna(valor) else valor.isoformat()
+    if _np is not None and isinstance(valor, _np.generic):
+        valor = valor.item()
+    if isinstance(valor, float) and (_math.isnan(valor) or _math.isinf(valor)):
+        return None
+    if valor is None or isinstance(valor, (str, int, float, bool)):
+        return valor
+    if _pd is not None and (valor is _pd.NaT or valor is _pd.NA):
+        return None
+    return str(valor)
+
+
+def dataframe(dados, column_config=None, hide_index=True, **kwargs):
+    if _tela.get() is None:
+        return _Nada()
+    import pandas as _pd
+    df = dados if isinstance(dados, _pd.DataFrame) else _pd.DataFrame(dados)
+    colunas = []
+    for nome in df.columns:
+        conf = (column_config or {}).get(nome)
+        conf = conf if isinstance(conf, dict) else {}
+        colunas.append({"nome": str(nome), "rotulo": conf.get("rotulo") or str(nome),
+                        "tipo": conf.get("tipo"), "formato": conf.get("formato")})
+    linhas = [[_json_simples(v) for v in linha] for linha in df.itertuples(index=False)]
+    return _bloco("tabela", colunas=colunas, linhas=linhas)
+
+
+def download_button(label, data=None, file_name="arquivo", mime=None, **kwargs):
+    if _tela.get() is None:
+        return _Nada()
+    import base64 as _b64
+    if callable(data):
+        data = data()
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return _bloco("download", rotulo=str(label), nome=str(file_name), mime=mime or "application/octet-stream",
+                  dados=_b64.b64encode(data or b"").decode())
+
+
+def _campo(widget, rotulo, opcoes, padrao, chave, format_func=None, **extra):
+    tela = _tela.get()
+    if tela is None:
+        return padrao
+    opcoes = list(opcoes) if opcoes is not None else None
+    textos = [str(format_func(o) if format_func else o) for o in opcoes] if opcoes is not None else None
+    def para_texto(v):
+        return None if v is None else str(v)
+    valor = padrao
+    if chave in tela.valores:
+        recebido = tela.valores[chave]
+        if opcoes is None:
+            valor = recebido
+        elif isinstance(recebido, list):
+            valor = [o for o in opcoes if str(o) in {str(r) for r in recebido}]
+        else:
+            valor = next((o for o in opcoes if str(o) == str(recebido)), padrao)
+    if chave:
+        session_state[chave] = valor
+    tela.atual().append({
+        "tipo": "campo", "widget": widget, "rotulo": str(rotulo), "chave": chave,
+        "opcoes": [str(o) for o in opcoes] if opcoes is not None else None, "textos": textos,
+        "valor": [str(v) for v in valor] if isinstance(valor, list) else (_json_simples(valor) if opcoes is None else para_texto(valor)),
+        **extra,
+    })
+    return valor
+
+
+def pills(label, options, selection_mode="single", default=None, key=None, format_func=None, **kw):
+    multi = selection_mode == "multi"
+    padrao = list(default or []) if multi else default
+    return _campo("pills", label, options, padrao, key, format_func, multi=multi)
+
+
+def segmented_control(label, options, selection_mode="single", default=None, key=None, format_func=None, **kw):
+    return _campo("segmentado", label, options, default, key, format_func)
+
+
+def radio(label, options, index=0, key=None, format_func=None, horizontal=False, **kw):
+    options = list(options)
+    padrao = options[index] if index is not None and options else None
+    return _campo("radio", label, options, padrao, key, format_func, horizontal=bool(horizontal))
+
+
+def selectbox(label, options, index=0, key=None, format_func=None, placeholder=None, **kw):
+    options = list(options)
+    padrao = options[index] if index is not None and options else None
+    return _campo("selectbox", label, options, padrao, key, format_func, placeholder=placeholder)
+
+
+def multiselect(label, options, default=None, key=None, format_func=None, placeholder=None, **kw):
+    return _campo("multiselect", label, options, list(default or []), key, format_func, placeholder=placeholder)
+
+
+def toggle(label, value=False, key=None, disabled=False, **kw):
+    return bool(_campo("toggle", label, None, bool(value), key, desabilitado=bool(disabled)))
+
+
+def checkbox(label, value=False, key=None, disabled=False, **kw):
+    return bool(_campo("checkbox", label, None, bool(value), key, desabilitado=bool(disabled)))
+
+
+def button(label, key=None, **kw):
+    tela = _tela.get()
+    if tela is None:
+        return False
+    chave = key or f"botao_{label}"
+    tela.atual().append({"tipo": "botao", "rotulo": str(label), "chave": chave,
+                         "primario": kw.get("type") == "primary"})
+    return bool(tela.valores.get(chave))
 
 
 def __getattr__(nome):

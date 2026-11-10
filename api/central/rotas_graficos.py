@@ -1,8 +1,10 @@
 """Gráficos da frota: os dados que a tela desenha (as contas são as do app.py)."""
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from .auth import usuario_atual
-from .base import L, Usuario, ativar, exigir_nivel, para_json
+from . import shim_streamlit
+from .base import L, Usuario, ativar, exigir_nivel, mensagens, para_json
 
 rotas = APIRouter(prefix="/api")
 
@@ -42,3 +44,24 @@ def atualizar(u: Usuario = Depends(usuario_atual)):
     ativar(u)
     L.invalidar_cache_fichas()
     return {"ok": True}
+
+
+class PedidoTela(BaseModel):
+    valores: dict = {}
+
+
+@rotas.post("/graficos/tela")
+def tela(pedido: PedidoTela, u: Usuario = Depends(usuario_atual)):
+    """A tela de gráficos do app.py gravada como árvore de blocos.
+
+    Assim os gráficos (Altair), as contas e os textos continuam exatamente os
+    do app.py; o site só desenha a árvore e devolve os valores dos campos.
+    """
+    ativar(u)
+    exigir_nivel(u, *L.PAGINAS["graficos"][3])
+    with shim_streamlit.gravar_tela(pedido.valores) as t:
+        try:
+            L.tela_graficos()
+        except shim_streamlit.StopException:
+            pass
+    return para_json({"blocos": t.arvore, "mensagens": mensagens()})

@@ -270,3 +270,20 @@ table.tabela { border-collapse: collapse; width: 100%; font-size: .88rem; }
 .busca-item { padding: .4rem .8rem; cursor: pointer; font-size: .93rem; }
 .busca-item.destaque { background: #FFF4EC; }
 .busca-item.escolhido { color: var(--laranja-escuro); font-weight: 600; }
+
+/* Telas gravadas do app.py */
+.pilulas { display: flex; flex-wrap: wrap; gap: .4rem; }
+.pilula { border: 1px solid var(--borda, #d9dce3); background: #fff; border-radius: 999px; padding: .3rem .85rem;
+  font: inherit; font-size: .9rem; cursor: pointer; color: inherit; }
+.pilula.ativa { border-color: var(--laranja); color: var(--laranja); background: rgba(255, 103, 0, .08); }
+.coluna-gravada > .metrica { height: 100%; }
+@media (max-width: 760px) { .grade.colunas-gravadas { grid-template-columns: minmax(0, 1fr) !important; } }
+
+/* Agenda */
+.barra-calendario { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .8rem; flex-wrap: wrap; }
+.barra-calendario .botao { border-radius: 18px; min-height: 2.2rem; }
+.barra-calendario .titulo-mes { font-size: 1.35rem; font-weight: 500; color: #3C4043; margin-left: .4rem; flex: 1; }
+.barra-calendario .direita { margin-left: auto; }
+.bola-pessoa { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .4rem; vertical-align: middle; }
+.linha-acoes { display: flex; align-items: center; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid #F1F3F4; }
+.linha-acoes > .texto { flex: 1; }
