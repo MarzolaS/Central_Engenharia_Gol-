@@ -25,7 +25,7 @@ const ICONES_MENU: Record<string, string> = {
   consulta: 'layout-dashboard', graficos: 'chart-column', nova_ficha: 'file-plus', edicao: 'file-pen-line',
   aprovar: 'circle-check-big', cadastrar_aeronave: 'plane', criar_login: 'users', assinaturas: 'signature',
   excluir: 'trash-2', gerou_aprovou: 'user-check', plantao: 'calendar-days', ferias: 'palmtree',
-  atividades: 'list-checks', time: 'users', consulta_srs: 'file-text',
+  atividades: 'list-checks', time: 'users', consulta_srs: 'file-text', pintura: 'paintbrush',
 }
 
 const ICONES_AREA: Record<string, string> = {

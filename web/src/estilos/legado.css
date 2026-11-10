@@ -279,3 +279,21 @@
   .ativ-tarefa { grid-template-columns: 2rem minmax(0, 1fr) 2.4rem; }
   .ativ-tarefa > .ativ-pessoa, .ativ-tarefa > .ativ-celula { grid-column: 2; min-height: 0; }
 }
+
+/* Pintura no site novo */
+.pint-grade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: .8rem; }
+@media (max-width: 900px) { .pint-grade { grid-template-columns: minmax(0, 1fr); } }
+.pint-clicavel { display: block; width: 100%; border: none; background: none; padding: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.pint-clicavel:hover .pint-cartao { transform: translateY(-2px); border-color: rgba(255, 106, 19, .4); box-shadow: 0 16px 34px -20px rgba(30, 36, 48, .38); }
+.pint-clicavel:hover .pint-novo { border-color: rgba(255, 106, 19, .55); color: #E85A05; background: rgba(255, 255, 255, .5); }
+.pint-voltar-btn { border: none; background: transparent; padding: 0; color: #6B7280; cursor: pointer; font: inherit; margin-bottom: .6rem; }
+.pint-voltar-btn:hover { color: #FF6A13; }
+.pint-nota-caixa { background: rgba(255, 255, 255, .62); border: 1px solid rgba(227, 230, 235, .85); border-radius: 12px;
+  padding: .55rem .9rem; margin-bottom: .4rem; display: flex; align-items: center; gap: .6rem; }
+.pint-nota-caixa > .pint-nota { flex: 1; }
+.pint-icone-btn { border: none; background: transparent; color: #9AA1AD; cursor: pointer; font-size: 1rem; padding: .2rem .35rem; }
+.pint-icone-btn:hover { color: #FF6A13; }
+.plan-caixa { background: rgba(255, 255, 255, .7); border: 1px solid rgba(227, 230, 235, .9); border-radius: 16px;
+  padding: 1rem 1.2rem 1.1rem; box-shadow: 0 10px 28px -22px rgba(30, 36, 48, .3); margin-bottom: 1rem; }
+.plan-caixa iframe { display: block; width: 100%; border: none; }
+.pint-desenho { width: 100%; border: none; display: block; }
