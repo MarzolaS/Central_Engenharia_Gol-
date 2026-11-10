@@ -1,0 +1,132 @@
+name: Publicar a Central Engenharia Gol
+
+# Publica a API (Hugging Face Space, Docker) e o site (Firebase Hosting, plano Spark).
+# Secrets usados: FIREBASE_SERVICE_ACCOUNT (JSON da conta firebase-adminsdk),
+# SUPABASE_DB_URL (banco) e HF_TOKEN (token com escrita no Hugging Face).
+# Variável opcional: HF_SPACE_API (ex.: usuario/central-engenharia-gol-api).
+on:
+  push:
+    branches: [main, migracao-firebase]
+  workflow_dispatch:
+
+concurrency:
+  group: publicar-central
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.space.outputs.url }}
+      projeto: ${{ steps.space.outputs.projeto }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Montar a pasta do Space
+        run: |
+          mkdir -p /tmp/space
+          cp app.py exemplo_ficha.xlsx tipo_aeronave.txt /tmp/space/
+          cp -r assets componentes /tmp/space/
+          cp -r api/central /tmp/space/central
+          cp api/Dockerfile api/requirements.txt /tmp/space/
+          cp deploy/huggingface-api/README.md /tmp/space/README.md
+          find /tmp/space -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: Criar ou atualizar o Space da API
+        id: space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_API: ${{ vars.HF_SPACE_API }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SESSAO_SEGREDO: ${{ secrets.SESSAO_SEGREDO }}
+        run: |
+          pip install --quiet "huggingface_hub>=0.25"
+          python - <<'PY'
+          import json, os, re, secrets as sec
+          from huggingface_hub import HfApi
+
+          for nome in ("HF_TOKEN", "FIREBASE_SERVICE_ACCOUNT", "SUPABASE_DB_URL"):
+              if not os.environ.get(nome):
+                  raise SystemExit(f"Falta o secret {nome} no GitHub.")
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          space = os.environ.get("HF_SPACE_API") or f"{api.whoami()['name']}/central-engenharia-gol-api"
+          projeto = json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT"])["project_id"]
+          api.create_repo(space, repo_type="space", space_sdk="docker", exist_ok=True)
+          origens = f"https://{projeto}.web.app,https://{projeto}.firebaseapp.com,http://localhost:5173"
+          valores = {
+              "DATABASE_URL": os.environ["SUPABASE_DB_URL"],
+              "FIREBASE_SERVICE_ACCOUNT": os.environ["FIREBASE_SERVICE_ACCOUNT"],
+              "SESSAO_SEGREDO": os.environ.get("SESSAO_SEGREDO") or sec.token_urlsafe(32),
+          }
+          for chave, valor in valores.items():
+              api.add_space_secret(space, chave, valor)
+          api.add_space_variable(space, "ORIGENS_PERMITIDAS", origens)
+          api.upload_folder(
+              repo_id=space, repo_type="space", folder_path="/tmp/space",
+              commit_message=f"Deploy {os.environ.get('GITHUB_SHA', '')[:7]}",
+              delete_patterns=["central/**"],
+          )
+          dono, nome = space.split("/")
+          url = "https://" + re.sub(r"[^a-z0-9-]", "-", f"{dono}-{nome}".lower()) + ".hf.space"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as saida:
+              saida.write(f"url={url}\nprojeto={projeto}\n")
+          print("API:", url)
+          PY
+
+  site:
+    needs: api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Conta de serviço do Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase.json" >> "$GITHUB_ENV"
+
+      - name: Configuração web do Firebase
+        env:
+          PROJETO: ${{ needs.api.outputs.projeto }}
+        run: |
+          npm install --global firebase-tools@14 > /dev/null
+          APP=$(firebase apps:list WEB --project "$PROJETO" --json | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d).result||[];console.log(r[0]?r[0].appId:"")})')
+          if [ -z "$APP" ]; then
+            firebase apps:create WEB "Central Engenharia Gol" --project "$PROJETO" > /dev/null
+            APP=$(firebase apps:list WEB --project "$PROJETO" --json | node -e \
+              'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).result[0].appId))')
+          fi
+          firebase apps:sdkconfig WEB "$APP" --project "$PROJETO" --json | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const c=JSON.parse(d).result.sdkConfig;
+             console.log("VITE_FIREBASE_CONFIG="+JSON.stringify(c))})' >> "$GITHUB_ENV"
+
+      - name: Gerar o site
+        working-directory: web
+        env:
+          VITE_API_URL: ${{ needs.api.outputs.url }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publicar no Firebase Hosting
+        env:
+          PROJETO: ${{ needs.api.outputs.projeto }}
+        run: firebase deploy --only hosting --project "$PROJETO" --non-interactive --config web/firebase.json
+
+      - name: Endereços
+        run: |
+          echo "Site: https://${{ needs.api.outputs.projeto }}.web.app"
+          echo "API:  ${{ needs.api.outputs.url }}"

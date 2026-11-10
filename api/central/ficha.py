@@ -389,3 +389,77 @@ def formulario_da_ficha(prefixo, row, mesma_ficha=True):
 def aviso_celulas(prefixo, registro, ficha_base, colunas):
     L.st.session_state["historico_colunas"] = tuple(colunas)
     return L.aviso_celulas_ficha(registro, ficha_base)
+
+
+def visualizacao(prefixo, row):
+    """Campos da ficha como a Consulta/Aprovação do app.py mostra (renderizar_ficha_visualizacao).
+
+    Cada campo traz o nome da coluna (para marcar "Erro" na aprovação), o rótulo e o valor em texto.
+    """
+    row = dict(row or {})
+    info_aero = L.dict_tipos_aeronave.get(prefixo, {})
+    lopa, config_lopa = L.separar_campos_lopa(row)
+
+    def campo(nome, rotulo, valor, permitir_erro=True):
+        return {"campo": nome, "rotulo": rotulo, "valor": safe_str(valor), "permitir_erro": permitir_erro}
+
+    dados_gerais = [
+        [campo("Pesagem", "Número da Pesagem:", row.get("Pesagem", ""), False),
+         campo("Revisao", "Número da Revisão:", row.get("Revisao", ""), False)],
+        [campo("Data da ficha", "Data de emissão:", row.get("Data da ficha", row.get("Data_da_Pesagem", ""))),
+         campo("Pesado Por", "Pesado por:", row.get("Pesado Por", row.get("WEIGHED BY", ""))),
+         campo("Local da pesagem", "Local da pesagem:", row.get("Local da pesagem", ""))],
+        [campo("Data_da_Pesagem", "Data da pesagem:", row.get("Data_da_Pesagem", "")),
+         campo("lopa", "LOPA:", lopa),
+         campo("config_lopa", "Configuração LOPA:", config_lopa)],
+        [campo("VRBL", "VRBL. NUMBER:", safe_str(row.get("VRBL")) or info_aero.get("vrbl", "")),
+         campo("SERIAL", "SERIAL NUMBER:", safe_str(row.get("SERIAL")) or info_aero.get("serial", "")),
+         campo("LINE", "LINE NUMBER:", safe_str(row.get("LINE")) or info_aero.get("line", ""))],
+        [campo("Motivo", "Razão para emissão:", row.get("Motivo", ""))],
+    ]
+    resposta = {"dados_gerais": dados_gerais, "boeing": bool(L.pesagem_boeing(row))}
+    if resposta["boeing"]:
+        resposta["boeing_campos"] = [
+            campo(nome, f"{rotulo} (lb)", row.get(nome, "")) for nome, rotulo in L.CAMPOS_BOEING_LB
+        ]
+        resposta["boeing_bracos"] = [
+            campo(f"Canela MLG {lado}", f"Balance arm Main {lado} (in)",
+                  f"{L.braco_mlg(row.get(f'Canela MLG {lado}'), boeing=True):.2f}")
+            for lado in ("LH", "RH")
+        ]
+        total_lb = sum(safe_float(row.get(nome)) for nome, _ in L.CAMPOS_BOEING_LB)
+        resposta["boeing_legenda"] = (
+            f"Total {L.formatar_numero(total_lb)} lb = {L.formatar_numero(total_lb * L.LB_PARA_KGF)} kgf. "
+            "Os pesos foram convertidos para kgf na ficha. "
+            f'DIM "A" gravado: LH {safe_float(row.get("Canela MLG LH")):.2f} in, '
+            f'RH {safe_float(row.get("Canela MLG RH")):.2f} in.'
+        )
+    else:
+        def real(nome):
+            for alternativa in ALTERNATIVAS.get(nome, [nome]):
+                if alternativa in row:
+                    return alternativa
+            return nome
+        resposta["pesagens"] = [
+            {"titulo": titulo, "celulas": [campo(real(nome), rotulo, row.get(real(nome), "")) for nome, rotulo in campos]}
+            for titulo, campos in (("Pesagem 01", CAMPOS_PESAGEM_1), ("Pesagem 02", CAMPOS_PESAGEM_2))
+        ]
+        resposta["canelas"] = [
+            campo("Canela MLG LH", "Canela MLG LH (in)", row.get("Canela MLG LH", "")),
+            campo("Canela MLG RH", "Canela MLG RH (in)", row.get("Canela MLG RH", "")),
+        ]
+
+    def itens(tipo, campo_desc, campo_peso, campo_braco):
+        lista = []
+        for i in itens_da_ficha(row, tipo.lower()):
+            indice = i["slot"]
+            lista.append({
+                "indice": indice, "descricao": i["desc"], "peso": i["peso"], "braco": i["braco"],
+                "campo": f"{tipo} {campo_desc} {indice}",
+                "campos": [f"{tipo} {c} {indice}" for c in (campo_desc, campo_peso, campo_braco)],
+            })
+        return lista
+
+    resposta["deducoes"] = itens("Deductions", "description", "Weigth", "arm")
+    resposta["adicoes"] = itens("Additions", "Description", "weigth", "arm")
+    return resposta

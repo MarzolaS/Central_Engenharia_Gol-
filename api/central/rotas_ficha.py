@@ -85,6 +85,8 @@ def ver_ficha(prefixo: str, pesagem: str, revisao: str, u: Usuario = Depends(usu
         "prefixo": prefixo, "pesagem": chave(pesagem), "revisao": chave(revisao),
         "registro": row,
         "formulario": ficha.formulario_da_ficha(prefixo, row),
+        "visualizacao": ficha.visualizacao(prefixo, row),
+        "momento_flaps": ficha.momento_flaps_sugerido(prefixo, row),
         "boeing": L.pesagem_boeing(row),
         "info_aeronave": L.dict_tipos_aeronave.get(prefixo, {}),
         "fluxo": fluxo,
@@ -196,6 +198,7 @@ def contexto_emissao(prefixo: str, u: Usuario = Depends(usuario_atual)):
         prefixo, ultima if not df.empty else {}
     )
     resposta["armnose"] = info_aero.get("armnose", 93.0)
+    resposta["formulario_vazio"] = ficha.formulario_da_ficha(prefixo, {}, False)
     return para_json(resposta)
 
 
