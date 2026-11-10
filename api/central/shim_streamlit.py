@@ -129,6 +129,49 @@ info = _guardar_mensagem("info")
 toast = _guardar_mensagem("info")
 
 
+# Gravação de telas só de leitura (ex.: curva S da pintura): o que a função do
+# app.py "desenharia" vira uma lista de blocos que o site mostra igual.
+_blocos = contextvars.ContextVar("blocos_tela", default=None)
+
+
+class gravar:
+    def __enter__(self):
+        self._token = _blocos.set([])
+        return self
+
+    def __exit__(self, *_):
+        self.blocos = _blocos.get()
+        _blocos.reset(self._token)
+        return False
+
+
+def _bloco(tipo, **dados):
+    lista = _blocos.get()
+    if lista is not None:
+        lista.append({"tipo": tipo, **dados})
+    return _Nada()
+
+
+def markdown(corpo="", unsafe_allow_html=False, **_):
+    return _bloco("html" if unsafe_allow_html else "markdown", conteudo=str(corpo))
+
+
+def caption(corpo="", unsafe_allow_html=False, **_):
+    return _bloco("caption", conteudo=str(corpo))
+
+
+def altair_chart(grafico, **_):
+    try:
+        spec = grafico.to_dict()
+    except Exception:
+        spec = None
+    return _bloco("vega", spec=spec)
+
+
+def metric(rotulo, valor, delta=None, **_):
+    return _bloco("metric", rotulo=str(rotulo), valor=str(valor), delta=None if delta is None else str(delta))
+
+
 class StopException(Exception):
     """Equivale ao st.stop(): a função parou de propósito."""
 
