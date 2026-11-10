@@ -243,10 +243,17 @@ export function Selecao<T extends string | number>({ rotulo, valor, opcoes, muda
   )
 }
 
-export function MultiSelecao({ rotulo, valor, opcoes, mudar, placeholder = 'Escolha', disabled, ajuda }: {
+export function MultiSelecao({ rotulo, valor, opcoes, mudar, placeholder = 'Escolha', disabled, ajuda, permitirNovo }: {
   rotulo?: ReactNode; valor: string[]; opcoes: string[]; mudar: (v: string[]) => void; placeholder?: string; disabled?: boolean; ajuda?: ReactNode
+  permitirNovo?: boolean
 }) {
   const restantes = opcoes.filter((o) => !valor.includes(o))
+  const [novo, setNovo] = useState('')
+  const incluirNovo = () => {
+    const t = novo.trim().replace(/\s+/g, ' ')
+    if (t && !valor.includes(t)) mudar([...valor, t])
+    setNovo('')
+  }
   return (
     <Campo rotulo={rotulo} ajuda={ajuda}>
       <div className="multi">
@@ -258,6 +265,10 @@ export function MultiSelecao({ rotulo, valor, opcoes, mudar, placeholder = 'Esco
             <option value="">{valor.length ? 'Adicionar…' : placeholder}</option>
             {restantes.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
+        )}
+        {!disabled && permitirNovo && (
+          <input className="multi-novo" value={novo} placeholder="Nome novo + Enter" onChange={(e) => setNovo(e.target.value)}
+            onBlur={incluirNovo} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); incluirNovo() } }} />
         )}
       </div>
     </Campo>
